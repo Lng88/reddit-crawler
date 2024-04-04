@@ -8,9 +8,10 @@ import (
 )
 
 type ConfigVars struct {
-	Discord       Discord  `mapstructure:",squash"`
-	SubReddit     string   `mapstructure:"subreddit"`
-	SearchStrings []string `mapstructure:"search_strings"`
+	Discord         Discord  `mapstructure:",squash"`
+	SubReddit       string   `mapstructure:"subreddit"`
+	SearchStrings   []string `mapstructure:"search_strings"`
+	ScrapeFrequency int64    `mapstructure:"scrape_frequency"`
 }
 
 type Discord struct {

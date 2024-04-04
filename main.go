@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"regexp"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/gocolly/colly"
@@ -17,24 +20,50 @@ var userID = "156579135878201346" // lng
 var redditBaseUrl = "https://old.reddit.com"
 
 func main() {
-
 	logger := log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
 	config, err := LoadConfig(logger)
 	if err != nil {
-		logger.Fatal("unable to load config...")
+		logger.Fatal("Unable to load config:", err)
 	}
 	dg := NewDiscord(logger, config)
-	err = dg.Open()
-	if err != nil {
-		logger.Fatal("error opening connection,", err)
-		return
-	}
+	ticker := time.NewTicker(time.Duration(config.ScrapeFrequency) * time.Minute)
+	defer ticker.Stop()
 
-	// TODO: Make cron job
+	// Prepare for graceful shutdown
+	stopChan := make(chan os.Signal, 1)
+	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM)
 
-	Scrape(logger, config.SubReddit, config.SearchStrings, dg)
-	logger.Println("closing websocket")
-	dg.Close()
+	// Ticker loop
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				logger.Println("Opening websocket")
+				if err := dg.Open(); err != nil {
+					logger.Println("Error opening connection:", err)
+					continue
+				}
+
+				Scrape(logger, config.SubReddit, config.SearchStrings, dg)
+
+				if err := dg.Close(); err != nil {
+					logger.Println("Error closing connection:", err)
+					continue
+				}
+
+				logger.Println("Websocket closed")
+			case <-stopChan:
+				logger.Println("Shutdown signal received, exiting...")
+				return
+			}
+		}
+	}()
+
+	// Block main goroutine until an OS signal is received
+	<-stopChan
+
+	// Perform any cleanup and final operations here
+	logger.Println("Application shutting down.")
 }
 
 func sendMessage(s *discordgo.Session, message string) error {
