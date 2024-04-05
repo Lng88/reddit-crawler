@@ -1,9 +1,10 @@
 discord_app_id: 
 discord_bot_token: 
 subreddit: homelabsales
-scrape_frequency: 1
+scrape_frequency: 15
 search_strings:
-  - ubiquiti
-  - qnap
+  - "\\[fs\\].*?ubiquiti"
+  - "\\[fs\\].*?qnap"
+  - "\\[fs\\].*?motorola"
 users_to_message:
   - 239049979828764674

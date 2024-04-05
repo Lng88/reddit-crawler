@@ -28,10 +28,9 @@ func main() {
 		logger.Fatal("Unable to load config:", err)
 	}
 	dg := NewDiscord(logger, config)
-	// ticker := time.NewTicker(time.Duration(config.ScrapeFrequency) * time.Minute)
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(time.Duration(config.ScrapeFrequency) * time.Minute)
 	defer ticker.Stop()
-	wipeFileTicker := time.NewTicker(1 * time.Minute)
+	wipeFileTicker := time.NewTicker(24 * time.Hour)
 
 	file, err := os.Create(fileName)
 	if err != nil {
