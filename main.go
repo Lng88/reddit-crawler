@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"os"
@@ -14,10 +15,11 @@ import (
 	"github.com/gocolly/colly"
 )
 
-// TODO: message multiple users
-var userID = "156579135878201346" // lng
-// var userID = "239049979828764674"
 var redditBaseUrl = "https://old.reddit.com"
+
+// must exist for program to work
+var fileName = "seen.txt"
+var fileMap = map[string]struct{}{}
 
 func main() {
 	logger := log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
@@ -26,13 +28,22 @@ func main() {
 		logger.Fatal("Unable to load config:", err)
 	}
 	dg := NewDiscord(logger, config)
-	ticker := time.NewTicker(time.Duration(config.ScrapeFrequency) * time.Minute)
+	// ticker := time.NewTicker(time.Duration(config.ScrapeFrequency) * time.Minute)
+	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
+	wipeFileTicker := time.NewTicker(1 * time.Minute)
+
+	file, err := os.Create(fileName)
+	if err != nil {
+		log.Fatalf("Failed to create file: %s", err)
+	}
+	file.Close()
 
 	// Prepare for graceful shutdown
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM)
 
+	logger.Println("waiting for next scrape...")
 	// Ticker loop
 	go func() {
 		for {
@@ -44,7 +55,7 @@ func main() {
 					continue
 				}
 
-				Scrape(logger, config.SubReddit, config.SearchStrings, dg)
+				Scrape(logger, config.SubReddit, config.SearchStrings, dg, config.UsersToMsg)
 
 				if err := dg.Close(); err != nil {
 					logger.Println("Error closing connection:", err)
@@ -52,6 +63,9 @@ func main() {
 				}
 
 				logger.Println("Websocket closed")
+			case <-wipeFileTicker.C:
+				os.Truncate(fileName, 0)
+				fileMap = map[string]struct{}{}
 			case <-stopChan:
 				logger.Println("Shutdown signal received, exiting...")
 				return
@@ -62,39 +76,84 @@ func main() {
 	// Block main goroutine until an OS signal is received
 	<-stopChan
 
-	// Perform any cleanup and final operations here
 	logger.Println("Application shutting down.")
 }
 
-func sendMessage(s *discordgo.Session, message string) error {
-	ch, err := s.UserChannelCreate(userID)
+func writeFile(content string) error {
+	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		return fmt.Errorf("creating user channel: %w", err)
+		return err
 	}
-	fmt.Println("channel ID", ch.ID)
-	_, err = s.ChannelMessageSend(ch.ID, message)
+	defer file.Close()
+
+	if _, err := file.WriteString(content + "\n"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func readFileLineByLine() error {
+	file, err := os.Open(fileName)
 	if err != nil {
-		return fmt.Errorf("sending message: %w", err)
+		return err
+	}
+	defer file.Close()
+
+	// Create a new Scanner for the file
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		fileMap[line] = struct{}{}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func sendMessage(logger *log.Logger, s *discordgo.Session, message string, users []string) error {
+	for _, u := range users {
+		ch, err := s.UserChannelCreate(u)
+		if err != nil {
+			return fmt.Errorf("creating user channel: %w", err)
+		}
+		fmt.Println("channel ID", ch.ID)
+		_, err = s.ChannelMessageSend(ch.ID, message)
+		if err != nil {
+			logger.Println("warning: error sending message to: ", u, err)
+		}
 	}
 	return nil
 }
 
-func Scrape(logger *log.Logger, subreddit string, substring []string, dg *discordgo.Session) {
+func Scrape(logger *log.Logger, subreddit string, substring []string, dg *discordgo.Session, users []string) {
 	c := colly.NewCollector()
 
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		for _, v := range substring {
-			pattern := fmt.Sprintf(`\[fs\].*?%s`, regexp.QuoteMeta(v))
-			re, err := regexp.Compile(pattern)
+			re, err := regexp.Compile(v)
 			if err != nil {
-				logger.Println("error compiling regexp", pattern)
+				logger.Println("error compiling regexp", v)
 				return
 			}
 			match := re.FindString(strings.ToLower(e.Text))
 			if match != "" {
-				err := sendMessage(dg, fmt.Sprintf("Found match for %s: %s/%s", v, redditBaseUrl, e.Attr("href")))
+				err := readFileLineByLine()
 				if err != nil {
-					logger.Fatal("error sending message: ", err)
+					logger.Println("error reading file", err)
+					return
+				}
+				if _, ok := fileMap[e.Text]; !ok {
+					err = sendMessage(logger, dg, fmt.Sprintf("Found match for %s: %s/%s", v, redditBaseUrl, e.Attr("href")), users)
+					if err != nil {
+						logger.Println("ERROR: sending message: ", err)
+						return
+					}
+					writeFile(e.Text)
 				}
 				fmt.Println("TEXT:", e.Text, "HREF:", e.Attr("href"))
 			}
@@ -109,6 +168,7 @@ func Scrape(logger *log.Logger, subreddit string, substring []string, dg *discor
 }
 
 func NewDiscord(logger *log.Logger, config ConfigVars) *discordgo.Session {
+	logger.Println("Initializing Discord agent...")
 	discord, err := discordgo.New("Bot " + config.Discord.BotToken)
 	if err != nil {
 		logger.Fatal("Unable to initialize Discord Bot")

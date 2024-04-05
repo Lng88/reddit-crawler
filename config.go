@@ -12,6 +12,7 @@ type ConfigVars struct {
 	SubReddit       string   `mapstructure:"subreddit"`
 	SearchStrings   []string `mapstructure:"search_strings"`
 	ScrapeFrequency int64    `mapstructure:"scrape_frequency"`
+	UsersToMsg      []string `mapstructure:"users_to_message"`
 }
 
 type Discord struct {

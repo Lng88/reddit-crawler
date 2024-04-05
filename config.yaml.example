@@ -5,3 +5,5 @@ scrape_frequency: 1
 search_strings:
   - ubiquiti
   - qnap
+users_to_message:
+  - 239049979828764674
